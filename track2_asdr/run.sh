@@ -5,20 +5,20 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export CUDA_VISIBLE_DEVICES="0,2,3"
 # for debug purpose, please set it to 1 otherwise, set it to 0
 export CUDA_LAUNCH_BLOCKING=0
 
-stage=0 # start from 0 if you need to start from data preparation
+stage=5 # start from 0 if you need to start from data preparation
 stop_stage=5
 
 # Create your access token at https://huggingface.co/settings/tokens
-HUGGINGFACE_ACCESS_TOKEN="YOUR_HUGGINGFACE_ACCESS_TOKEN"
+HUGGINGFACE_ACCESS_TOKEN="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"
 ################################################
 # The icmc-asr dataset location, please change this to your own path!!!
 # Make sure of using absolute path. DO-NOT-USE relatvie path!
 # data dir for IVA + AEC enhanced audio
-data_enhanced=/home/work_nfs4_ssd/hwang/data/ICMC-ASR_ENHANCED
+data_enhanced=/root/data/ICMC-ASR/ICMC-ASR_ENHANCED
 ################################################
 
 nj=64
@@ -32,7 +32,7 @@ threshold=0.95
 data_type=raw
 num_utts_per_shard=1000
 
-test_set="eval_track2_aec_iva"
+test_set=dev_aec_iva
 dir=exp/baseline_ebranchformer
 
 # use average_checkpoint will get better result
