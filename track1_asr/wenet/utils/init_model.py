@@ -26,6 +26,7 @@ from wenet.branchformer.encoder import BranchformerEncoder
 from wenet.e_branchformer.encoder import EBranchformerEncoder
 from wenet.squeezeformer.encoder import SqueezeformerEncoder
 from wenet.efficient_conformer.encoder import EfficientConformerEncoder
+from wenet.snnconformer.encoder import SNNConformerEncoder
 from wenet.paraformer.paraformer import Paraformer
 from wenet.cif.predictor import Predictor
 from wenet.utils.cmvn import load_cmvn
@@ -70,6 +71,10 @@ def init_model(configs):
         encoder = EBranchformerEncoder(input_dim,
                                        global_cmvn=global_cmvn,
                                        **configs['encoder_conf'])
+    elif encoder_type == 'snnconformer': # newcode:SNNConformer
+        encoder = SNNConformerEncoder(input_dim,
+                                      global_cmvn=global_cmvn,
+                                      **configs['encoder_conf'])
     else:
         encoder = TransformerEncoder(input_dim,
                                      global_cmvn=global_cmvn,
