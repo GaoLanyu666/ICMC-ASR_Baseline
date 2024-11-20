@@ -20,8 +20,8 @@ from typing import Optional, Tuple
 
 import torch
 from torch import nn
+from spikingjelly.activation_based import neuron, functional
 
-from spikingjelly.activation_based import neuron
 
 class SNNConformerEncoderLayer(nn.Module):
     """Encoder layer module.
@@ -33,7 +33,7 @@ class SNNConformerEncoderLayer(nn.Module):
         feed_forward (torch.nn.Module): Feed-forward module instance.
             `PositionwiseFeedForward` instance can be used as the argument.
         feed_forward_macaron (torch.nn.Module): Additional feed-forward module
-             instance.
+            instance.
             `PositionwiseFeedForward` instance can be used as the argument.
         conv_module (torch.nn.Module): Convolution module instance.
             `ConvlutionModule` instance can be used as the argument.
@@ -52,8 +52,9 @@ class SNNConformerEncoderLayer(nn.Module):
             conv_module: Optional[nn.Module] = None,
             dropout_rate: float = 0.1,
             normalize_before: bool = True,
+            time_steps: int = 128,  # Number of simulation time steps
     ):
-        """Construct an EncoderLayer object."""
+        """Construct an SNNConformerEncoderLayer object."""
         super().__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
@@ -61,19 +62,24 @@ class SNNConformerEncoderLayer(nn.Module):
         self.conv_module = conv_module
         self.norm_ff = nn.LayerNorm(size, eps=1e-5)  # for the FNN module
         self.norm_mha = nn.LayerNorm(size, eps=1e-5)  # for the MHA module
+        self.time_steps = time_steps  # SNN-specific parameter
+
         if feed_forward_macaron is not None:
             self.norm_ff_macaron = nn.LayerNorm(size, eps=1e-5)
             self.ff_scale = 0.5
         else:
             self.ff_scale = 1.0
+
         if self.conv_module is not None:
-            self.norm_conv = nn.LayerNorm(size,
-                                          eps=1e-5)  # for the CNN module
-            self.norm_final = nn.LayerNorm(
-                size, eps=1e-5)  # for the final output of the block
+            self.norm_conv = nn.LayerNorm(size, eps=1e-5)  # for the CNN module
+            self.norm_final = nn.LayerNorm(size, eps=1e-5)  # final norm layer
+
         self.dropout = nn.Dropout(dropout_rate)
         self.size = size
         self.normalize_before = normalize_before
+
+        # Replace activation functions with SNN neurons
+        self.snn_activation = neuron.IFNode()
 
     def forward(
             self,
@@ -116,7 +122,7 @@ class SNNConformerEncoderLayer(nn.Module):
             if not self.normalize_before:
                 x = self.norm_ff_macaron(x)
 
-        # multi-headed self-attention module
+        # Multi-headed self-attention module
         residual = x
         if self.normalize_before:
             x = self.norm_mha(x)
@@ -126,7 +132,7 @@ class SNNConformerEncoderLayer(nn.Module):
         if not self.normalize_before:
             x = self.norm_mha(x)
 
-        # convolution module
+        # Convolution module
         # Fake new cnn cache here, and then change it in conv_module
         new_cnn_cache = torch.zeros((0, 0, 0), dtype=x.dtype, device=x.device)
         if self.conv_module is not None:
@@ -135,20 +141,25 @@ class SNNConformerEncoderLayer(nn.Module):
                 x = self.norm_conv(x)
             x, new_cnn_cache = self.conv_module(x, mask_pad, cnn_cache)
             x = residual + self.dropout(x)
-
             if not self.normalize_before:
                 x = self.norm_conv(x)
 
-        # feed forward module
+        # Feed-forward module
         residual = x
         if self.normalize_before:
             x = self.norm_ff(x)
-
         x = residual + self.ff_scale * self.dropout(self.feed_forward(x))
         if not self.normalize_before:
             x = self.norm_ff(x)
 
+        # Apply SNN activation (integrate-and-fire neuron)
+        mem, spike = self.snn_activation(x + mem)
+        spike_out.append(spike)
+
         if self.conv_module is not None:
             x = self.norm_final(x)
+
+        # Aggregate spikes over all time steps
+        x = torch.stack(spike_out).mean(0)
 
         return x, mask, new_att_cache, new_cnn_cache
