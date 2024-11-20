@@ -30,7 +30,7 @@ import yaml
 from deepspeed.runtime.zero.stage_1_and_2 import estimate_zero2_model_states_mem_needs_all_live  # noqa
 from deepspeed.runtime.zero.stage3 import estimate_zero3_model_states_mem_needs_all_live  # noqa
 from deepspeed.utils.zero_to_fp32 import convert_zero_checkpoint_to_fp32_state_dict
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from wenet.dataset.dataset import Dataset
@@ -152,6 +152,9 @@ def get_args():
 
 def main():
     args = get_args()
+    # 移除spiking jelly框架设定的处理器
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s %(levelname)s %(message)s')
     # NOTE(xcsong): deepspeed set CUDA_VISIBLE_DEVICES internally
@@ -408,8 +411,10 @@ def main():
         lr = optimizer.param_groups[0]['lr']
         logging.info('Epoch {} TRAIN info lr {}'.format(epoch, lr))
         device = model.local_rank if args.deepspeed else device
+        print('begin training')
         executor.train(model, optimizer, scheduler, train_data_loader, device,
                        writer, configs, scaler)
+        print('end training')
         total_loss, num_seen_utts = executor.cv(model, cv_data_loader, device,
                                                 configs)
         cv_loss = total_loss / num_seen_utts

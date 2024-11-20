@@ -39,8 +39,9 @@ from wenet.utils.common import get_activation
 from wenet.utils.mask import make_pad_mask
 from wenet.utils.mask import add_optional_chunk_mask
 
+from spikingjelly.activation_based import neuron
 
-class SNNBaseEncoder(torch.nn.Module):
+class SNNConformerEncoder(torch.nn.Module):
     def __init__(
             self,
             input_size: int,
@@ -52,14 +53,23 @@ class SNNBaseEncoder(torch.nn.Module):
             positional_dropout_rate: float = 0.1,
             attention_dropout_rate: float = 0.0,
             input_layer: str = "conv2d",
-            pos_enc_layer_type: str = "abs_pos",
+            pos_enc_layer_type: str = "rel_pos",
             normalize_before: bool = True,
             static_chunk_size: int = 0,
             use_dynamic_chunk: bool = False,
             global_cmvn: torch.nn.Module = None,
             use_dynamic_left_chunk: bool = False,
+            positionwise_conv_kernel_size: int = 1,
+            macaron_style: bool = True,
+            selfattention_layer_type: str = "rel_selfattn",
+            activation_type: str = "swish",
+            use_cnn_module: bool = True,
+            cnn_module_kernel: int = 15,
+            causal: bool = False,
+            cnn_module_norm: str = "batch_norm",
     ):
-        """
+        """Construct SNNConformerEncoder
+
         Args:
             input_size (int): input dim
             output_size (int): dimension of attention
@@ -86,6 +96,17 @@ class SNNBaseEncoder(torch.nn.Module):
             global_cmvn (Optional[torch.nn.Module]): Optional GlobalCMVN module
             use_dynamic_left_chunk (bool): whether use dynamic left chunk in
                 dynamic chunk training
+            positionwise_conv_kernel_size (int): Kernel size of positionwise
+                conv1d layer.
+            macaron_style (bool): Whether to use macaron style for
+                positionwise layer.
+            selfattention_layer_type (str): Encoder attention layer type,
+                the parameter has no effect now, it's just for configure
+                compatibility.
+            activation_type (str): Encoder activation function type.
+            use_cnn_module (bool): Whether to use convolution module.
+            cnn_module_kernel (int): Kernel size of convolution module.
+            causal (bool): whether to use causal convolution or not.
         """
         super().__init__()
         self._output_size = output_size
@@ -127,6 +148,45 @@ class SNNBaseEncoder(torch.nn.Module):
         self.static_chunk_size = static_chunk_size
         self.use_dynamic_chunk = use_dynamic_chunk
         self.use_dynamic_left_chunk = use_dynamic_left_chunk
+
+        activation = get_activation(activation_type)
+
+        # self-attention module definition
+        if pos_enc_layer_type != "rel_pos":
+            encoder_selfattn_layer = MultiHeadedAttention
+        else:
+            encoder_selfattn_layer = RelPositionMultiHeadedAttention
+        encoder_selfattn_layer_args = (
+            attention_heads,
+            output_size,
+            attention_dropout_rate,
+        )
+        # feed-forward module definition
+        positionwise_layer = PositionwiseFeedForward
+        positionwise_layer_args = (
+            output_size,
+            linear_units,
+            dropout_rate,
+            activation,
+        )
+        # convolution module definition
+        convolution_layer = ConvolutionModule
+        convolution_layer_args = (output_size, cnn_module_kernel, activation,
+                                  cnn_module_norm, causal)
+
+        self.encoders = torch.nn.ModuleList([
+            SNNConformerEncoderLayer(
+                output_size,
+                encoder_selfattn_layer(*encoder_selfattn_layer_args),
+                positionwise_layer(*positionwise_layer_args),
+                positionwise_layer(
+                    *positionwise_layer_args) if macaron_style else None,
+                convolution_layer(
+                    *convolution_layer_args) if use_cnn_module else None,
+                dropout_rate,
+                normalize_before,
+            ) for _ in range(num_blocks)
+        ])
 
     def output_size(self) -> int:
         return self._output_size
@@ -324,94 +384,3 @@ class SNNBaseEncoder(torch.nn.Module):
         ys = torch.cat(outputs, 1)
         masks = torch.ones((1, 1, ys.size(1)), device=ys.device, dtype=torch.bool)
         return ys, masks
-
-
-class SNNConformerEncoder(SNNBaseEncoder):
-    """Conformer encoder module."""
-
-    def __init__(
-            self,
-            input_size: int,
-            output_size: int = 256,
-            attention_heads: int = 4,
-            linear_units: int = 2048,
-            num_blocks: int = 6,
-            dropout_rate: float = 0.1,
-            positional_dropout_rate: float = 0.1,
-            attention_dropout_rate: float = 0.0,
-            input_layer: str = "conv2d",
-            pos_enc_layer_type: str = "rel_pos",
-            normalize_before: bool = True,
-            static_chunk_size: int = 0,
-            use_dynamic_chunk: bool = False,
-            global_cmvn: torch.nn.Module = None,
-            use_dynamic_left_chunk: bool = False,
-            positionwise_conv_kernel_size: int = 1,
-            macaron_style: bool = True,
-            selfattention_layer_type: str = "rel_selfattn",
-            activation_type: str = "swish",
-            use_cnn_module: bool = True,
-            cnn_module_kernel: int = 15,
-            causal: bool = False,
-            cnn_module_norm: str = "batch_norm",
-    ):
-        """Construct ConformerEncoder
-
-        Args:
-            input_size to use_dynamic_chunk, see in BaseEncoder
-            positionwise_conv_kernel_size (int): Kernel size of positionwise
-                conv1d layer.
-            macaron_style (bool): Whether to use macaron style for
-                positionwise layer.
-            selfattention_layer_type (str): Encoder attention layer type,
-                the parameter has no effect now, it's just for configure
-                compatibility.
-            activation_type (str): Encoder activation function type.
-            use_cnn_module (bool): Whether to use convolution module.
-            cnn_module_kernel (int): Kernel size of convolution module.
-            causal (bool): whether to use causal convolution or not.
-        """
-        super().__init__(input_size, output_size, attention_heads,
-                         linear_units, num_blocks, dropout_rate,
-                         positional_dropout_rate, attention_dropout_rate,
-                         input_layer, pos_enc_layer_type, normalize_before,
-                         static_chunk_size, use_dynamic_chunk,
-                         global_cmvn, use_dynamic_left_chunk)
-        activation = get_activation(activation_type)
-
-        # self-attention module definition
-        if pos_enc_layer_type != "rel_pos":
-            encoder_selfattn_layer = MultiHeadedAttention
-        else:
-            encoder_selfattn_layer = RelPositionMultiHeadedAttention
-        encoder_selfattn_layer_args = (
-            attention_heads,
-            output_size,
-            attention_dropout_rate,
-        )
-        # feed-forward module definition
-        positionwise_layer = PositionwiseFeedForward
-        positionwise_layer_args = (
-            output_size,
-            linear_units,
-            dropout_rate,
-            activation,
-        )
-        # convolution module definition
-        convolution_layer = ConvolutionModule
-        convolution_layer_args = (output_size, cnn_module_kernel, activation,
-                                  cnn_module_norm, causal)
-
-        self.encoders = torch.nn.ModuleList([
-            SNNConformerEncoderLayer(
-                output_size,
-                encoder_selfattn_layer(*encoder_selfattn_layer_args),
-                positionwise_layer(*positionwise_layer_args),
-                positionwise_layer(
-                    *positionwise_layer_args) if macaron_style else None,
-                convolution_layer(
-                    *convolution_layer_args) if use_cnn_module else None,
-                dropout_rate,
-                normalize_before,
-            ) for _ in range(num_blocks)
-        ])

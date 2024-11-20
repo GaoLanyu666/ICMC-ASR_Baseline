@@ -21,6 +21,8 @@ from typing import Optional, Tuple
 import torch
 from torch import nn
 
+from spikingjelly.activation_based import neuron
+
 class SNNConformerEncoderLayer(nn.Module):
     """Encoder layer module.
     Args:

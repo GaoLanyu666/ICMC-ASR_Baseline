@@ -184,6 +184,9 @@ def get_args():
 
 def main():
     args = get_args()
+    # 移除spiking jelly框架设定的处理器
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
     logging.basicConfig(level=logging.DEBUG,
                         format='%(asctime)s %(levelname)s %(message)s')
     os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
