@@ -111,6 +111,7 @@ class SNNConformerEncoder(torch.nn.Module):
         super().__init__()
         self._output_size = output_size
 
+        # Checking:定义位置编码层，选择合适的编码类型
         if pos_enc_layer_type == "abs_pos":
             pos_enc_class = PositionalEncoding
         elif pos_enc_layer_type == "rel_pos":
@@ -120,6 +121,9 @@ class SNNConformerEncoder(torch.nn.Module):
         else:
             raise ValueError("unknown pos_enc_layer: " + pos_enc_layer_type)
 
+        # TODO:定义输入处理层（降采样层），应该对应模型中的卷积层
+        # 可能涉及到修改整个Conv2dSubsampling4类
+        # 其中会使用spikingjelly.activation_based.layer.Conv2d和from spikingjelly.activation_based.neuron等等
         if input_layer == 'identity':
             subsampling_class = IdentitySubsampling
         if input_layer == "linear":
@@ -135,7 +139,11 @@ class SNNConformerEncoder(torch.nn.Module):
         else:
             raise ValueError("unknown input_layer: " + input_layer)
 
+        # Checking:定义全局均值方差归一化层，用于对输入特征进行归一化
         self.global_cmvn = global_cmvn
+
+        # Checking:定义输入嵌入层，将输入特征进行降采样处理，并加入位置编码信息
+        # 主要需要check参数是否符合SNN要求
         self.embed = subsampling_class(
             input_size,
             output_size,
@@ -143,14 +151,25 @@ class SNNConformerEncoder(torch.nn.Module):
             pos_enc_class(output_size, positional_dropout_rate),
         )
 
+        # Checking:flag，是否执行归一化操作
         self.normalize_before = normalize_before
+        # TODO:定义层间归一化层
+        # 应该需要重新定义LayerNorm层，使其符合SNN要求
+        # 惊蛰框架中似乎没有LayerNorm层，只有BatchNorm层
+        # 考虑换用BatchNorm层或者结合torch和惊蛰框架自己实现
         self.after_norm = torch.nn.LayerNorm(output_size, eps=1e-5)
+
+        # Checking:定义静态分块大小，动态分块标志，动态左分块标志
         self.static_chunk_size = static_chunk_size
         self.use_dynamic_chunk = use_dynamic_chunk
         self.use_dynamic_left_chunk = use_dynamic_left_chunk
 
+        # TODO:定义激活函数
+        # 使用spikingjelly.activation_based.neuron中的激活函数代替
         activation = get_activation(activation_type)
 
+        # TODO:定义注意力层和相关参数
+        # 重点检查应该怎么修改
         # self-attention module definition
         if pos_enc_layer_type != "rel_pos":
             encoder_selfattn_layer = MultiHeadedAttention
@@ -161,6 +180,9 @@ class SNNConformerEncoder(torch.nn.Module):
             output_size,
             attention_dropout_rate,
         )
+
+        # TODO:定义位置前馈网络层和相关参数
+        # 使用spikingjelly.activation_based.neuron和spikingjelly.activation_based.layer相关函数代替
         # feed-forward module definition
         positionwise_layer = PositionwiseFeedForward
         positionwise_layer_args = (
@@ -169,6 +191,10 @@ class SNNConformerEncoder(torch.nn.Module):
             dropout_rate,
             activation,
         )
+
+        # TODO:定义卷积模块层和相关参数
+        # 相对来说比较复杂，不能直接用惊蛰框架替换，需要重新定义函数。
+        # 结合spikingjelly.activation_based.neuron和spikingjelly.activation_based.layer相关函数进行重写
         # convolution module definition
         convolution_layer = ConvolutionModule
         convolution_layer_args = (output_size, cnn_module_kernel, activation,

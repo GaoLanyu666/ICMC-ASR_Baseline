@@ -59,7 +59,13 @@ class SNNConformerEncoderLayer(nn.Module):
         self.feed_forward = feed_forward
         self.feed_forward_macaron = feed_forward_macaron
         self.conv_module = conv_module
+
+        # TODO:定义层间归一化层
+        # 应该需要重新定义LayerNorm层，使其符合SNN要求
+        # 惊蛰框架中似乎没有LayerNorm层，只有BatchNorm层
+        # 考虑换用BatchNorm层或者结合torch和惊蛰框架自己实现
         self.norm_ff = nn.LayerNorm(size, eps=1e-5)  # for the FNN module
+        # TODO:同上
         self.norm_mha = nn.LayerNorm(size, eps=1e-5)  # for the MHA module
         if feed_forward_macaron is not None:
             self.norm_ff_macaron = nn.LayerNorm(size, eps=1e-5)
@@ -71,8 +77,12 @@ class SNNConformerEncoderLayer(nn.Module):
                                           eps=1e-5)  # for the CNN module
             self.norm_final = nn.LayerNorm(
                 size, eps=1e-5)  # for the final output of the block
+        # TODO:定义dropout层
+        # 使用惊蛰框架中的dropout层
         self.dropout = nn.Dropout(dropout_rate)
+        # Checking:这里的self.size是什么？用在哪儿了？
         self.size = size
+        # Checking:flag，是否执行归一化操作
         self.normalize_before = normalize_before
 
     def forward(
