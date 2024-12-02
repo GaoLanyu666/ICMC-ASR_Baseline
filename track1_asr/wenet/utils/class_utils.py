@@ -3,7 +3,7 @@
 # Copyright [2023-11-28] <sxc19@mails.tsinghua.edu.cn, Xingchen Song>
 import torch
 from torch.nn import BatchNorm1d, LayerNorm
-from wenet.paraformer.embedding import ParaformerPositinoalEncoding
+# from wenet.paraformer.embedding import ParaformerPositinoalEncoding
 from wenet.transformer.norm import RMSNorm
 from wenet.transformer.positionwise_feed_forward import (
     GatedVariantsMLP, MoEFFNLayer, PositionwiseFeedForward,
@@ -86,7 +86,7 @@ WENET_EMB_CLASSES = {
     "no_pos": NoPositionalEncoding,
     "abs_pos_whisper": WhisperPositionalEncoding,
     "embed_learnable_pe": LearnablePositionalEncoding,
-    "abs_pos_paraformer": ParaformerPositinoalEncoding,
+    # "abs_pos_paraformer": ParaformerPositinoalEncoding,
     'rope_pos': RopePositionalEncoding,
 }
 
