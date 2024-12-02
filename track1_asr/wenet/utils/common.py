@@ -270,3 +270,47 @@ def log_add(args: List[int]) -> float:
 
 def str2bool(v):
     return v.lower() in ('true', '1')
+
+def mask_to_bias(mask: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:
+    assert mask.dtype == torch.bool
+    assert dtype in [torch.float32, torch.bfloat16, torch.float16]
+    mask = mask.to(dtype)
+    # attention mask bias
+    # NOTE(Mddct): torch.finfo jit issues
+    #     chunk_masks = (1.0 - chunk_masks) * torch.finfo(dtype).min
+    mask = (1.0 - mask) * -1.0e+10
+    return mask
+
+class StepTimer:
+    """Utility class for measuring steps/second."""
+
+    def __init__(self, step=0.0):
+        self.last_iteration = step
+        self.start()
+
+    def start(self):
+        self.last_time = time.time()
+
+    def steps_per_second(self, cur_step, restart=True):
+        value = ((float(cur_step) - self.last_iteration) /
+                 (time.time() - self.last_time))
+        if restart:
+            self.start()
+            self.last_iteration = float(cur_step)
+        return value
+
+def get_nested_attribute(obj, attr_path):
+    if isinstance(obj, torch.nn.parallel.DistributedDataParallel):
+        obj = obj.module
+    attributes = attr_path.split('.')
+    for attr in attributes:
+        obj = getattr(obj, attr)
+    return obj
+
+def lrs_to_str(lrs: List):
+    return " ".join(["{:.4e}".format(lr) for lr in lrs])
+
+def tensor_to_scalar(x):
+    if torch.is_tensor(x):
+        return x.item()
+    return x
