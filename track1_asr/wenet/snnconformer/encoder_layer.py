@@ -20,8 +20,9 @@ from typing import Optional, Tuple
 
 import torch
 from torch import nn
-from spikingjelly.activation_based import neuron, functional
+from wenet.transformer.attention import T_CACHE
 
+from wenet.utils.class_utils import WENET_NORM_CLASSES
 
 class SNNConformerEncoderLayer(nn.Module):
     """Encoder layer module.
@@ -33,7 +34,7 @@ class SNNConformerEncoderLayer(nn.Module):
         feed_forward (torch.nn.Module): Feed-forward module instance.
             `PositionwiseFeedForward` instance can be used as the argument.
         feed_forward_macaron (torch.nn.Module): Additional feed-forward module
-            instance.
+             instance.
             `PositionwiseFeedForward` instance can be used as the argument.
         conv_module (torch.nn.Module): Convolution module instance.
             `ConvlutionModule` instance can be used as the argument.
@@ -44,42 +45,57 @@ class SNNConformerEncoderLayer(nn.Module):
     """
 
     def __init__(
-            self,
-            size: int,
-            self_attn: torch.nn.Module,
-            feed_forward: Optional[nn.Module] = None,
-            feed_forward_macaron: Optional[nn.Module] = None,
-            conv_module: Optional[nn.Module] = None,
-            dropout_rate: float = 0.1,
-            normalize_before: bool = True,
-            time_steps: int = 128,  # Number of simulation time steps
+        self,
+        size: int,
+        self_attn: torch.nn.Module,
+        feed_forward: Optional[nn.Module] = None,
+        feed_forward_macaron: Optional[nn.Module] = None,
+        conv_module: Optional[nn.Module] = None,
+        dropout_rate: float = 0.1,
+        normalize_before: bool = True,
+        layer_norm_type: str = 'layer_norm',
+        norm_eps: float = 1e-5,
+        node: str = "plif",
+        T: int = 4,
     ):
-        """Construct an SNNConformerEncoderLayer object."""
+        """Construct an EncoderLayer object."""
         super().__init__()
         self.self_attn = self_attn
         self.feed_forward = feed_forward
         self.feed_forward_macaron = feed_forward_macaron
         self.conv_module = conv_module
-        self.norm_ff = nn.LayerNorm(size, eps=1e-5)  # for the FNN module
-        self.norm_mha = nn.LayerNorm(size, eps=1e-5)  # for the MHA module
-        self.time_steps = time_steps  # SNN-specific parameter
 
+        # TODO:定义层间归一化层
+        # 应该需要重新定义LayerNorm层，使其符合SNN要求
+        # 惊蛰框架中似乎没有LayerNorm层，只有BatchNorm层
+        # 考虑换用BatchNorm层或者结合torch和惊蛰框架自己实现
+        assert layer_norm_type in ['layer_norm', 'rms_norm']
+        self.norm_ff = WENET_NORM_CLASSES[layer_norm_type](
+            size, eps=norm_eps)  # for the FNN module
+        # TODO:同上
+        self.norm_mha = WENET_NORM_CLASSES[layer_norm_type](
+            size, eps=norm_eps)  # for the MHA module
         if feed_forward_macaron is not None:
-            self.norm_ff_macaron = nn.LayerNorm(size, eps=1e-5)
+            self.norm_ff_macaron = WENET_NORM_CLASSES[layer_norm_type](
+                size, eps=norm_eps)
             self.ff_scale = 0.5
         else:
             self.ff_scale = 1.0
-
         if self.conv_module is not None:
-            self.norm_conv = nn.LayerNorm(size, eps=1e-5)  # for the CNN module
-            self.norm_final = nn.LayerNorm(size, eps=1e-5)  # final norm layer
-
+            self.norm_conv = WENET_NORM_CLASSES[layer_norm_type](
+                size, eps=norm_eps)  # for the CNN module
+            self.norm_final = WENET_NORM_CLASSES[layer_norm_type](
+                size, eps=norm_eps)  # for the final output of the block
+        # TODO:定义dropout层
+        # 使用惊蛰框架中的dropout层
         self.dropout = nn.Dropout(dropout_rate)
+        # XXX:这里的self.size是什么？用在哪儿了？
         self.size = size
+        # XXX:flag，是否执行归一化操作
         self.normalize_before = normalize_before
 
-        # Replace activation functions with SNN neurons
-        self.snn_activation = neuron.IFNode()
+        self.node = node
+        self.T = T
 
     def forward(
             self,
@@ -87,7 +103,8 @@ class SNNConformerEncoderLayer(nn.Module):
             mask: torch.Tensor,
             pos_emb: torch.Tensor,
             mask_pad: torch.Tensor = torch.ones((0, 0, 0), dtype=torch.bool),
-            att_cache: torch.Tensor = torch.zeros((0, 0, 0, 0)),
+            att_cache:T_CACHE = (torch.zeros(
+                (0, 0, 0, 0)), torch.zeros((0, 0, 0, 0))),
             cnn_cache: torch.Tensor = torch.zeros((0, 0, 0, 0)),
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute encoded features.
@@ -122,7 +139,7 @@ class SNNConformerEncoderLayer(nn.Module):
             if not self.normalize_before:
                 x = self.norm_ff_macaron(x)
 
-        # Multi-headed self-attention module
+        # multi-headed self-attention module
         residual = x
         if self.normalize_before:
             x = self.norm_mha(x)
@@ -132,7 +149,7 @@ class SNNConformerEncoderLayer(nn.Module):
         if not self.normalize_before:
             x = self.norm_mha(x)
 
-        # Convolution module
+        # convolution module
         # Fake new cnn cache here, and then change it in conv_module
         new_cnn_cache = torch.zeros((0, 0, 0), dtype=x.dtype, device=x.device)
         if self.conv_module is not None:
@@ -141,25 +158,20 @@ class SNNConformerEncoderLayer(nn.Module):
                 x = self.norm_conv(x)
             x, new_cnn_cache = self.conv_module(x, mask_pad, cnn_cache)
             x = residual + self.dropout(x)
+
             if not self.normalize_before:
                 x = self.norm_conv(x)
 
-        # Feed-forward module
+        # feed forward module
         residual = x
         if self.normalize_before:
             x = self.norm_ff(x)
+
         x = residual + self.ff_scale * self.dropout(self.feed_forward(x))
         if not self.normalize_before:
             x = self.norm_ff(x)
 
-        # Apply SNN activation (integrate-and-fire neuron)
-        mem, spike = self.snn_activation(x + mem)
-        spike_out.append(spike)
-
         if self.conv_module is not None:
             x = self.norm_final(x)
-
-        # Aggregate spikes over all time steps
-        x = torch.stack(spike_out).mean(0)
 
         return x, mask, new_att_cache, new_cnn_cache
