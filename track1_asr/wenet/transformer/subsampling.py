@@ -18,6 +18,10 @@ from typing import Tuple, Union
 
 import torch
 
+from wenet.utils.mask import make_pad_mask
+
+from spikingjelly.clock_driven.neuron import MultiStepParametricLIFNode, MultiStepLIFNode
+
 
 class BaseSubsampling(torch.nn.Module):
 
@@ -147,6 +151,63 @@ class LinearNoSubsampling(BaseSubsampling):
         return x, pos_emb, x_mask
 
 
+class Conv1dSubsampling2(BaseSubsampling):
+    """Convolutional 1D subsampling (to 1/2 length).
+       It is designed for Whisper, ref:
+       https://github.com/openai/whisper/blob/main/whisper/model.py
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(self, idim: int, odim: int, dropout_rate: float,
+                 pos_enc_class: torch.nn.Module):
+        """Construct an Conv1dSubsampling2 object."""
+        super().__init__()
+        self.conv = torch.nn.Sequential(
+            torch.nn.Conv1d(idim, odim, kernel_size=3, padding=1),
+            torch.nn.GELU(),
+            torch.nn.Conv1d(odim, odim, kernel_size=3, stride=2, padding=1),
+            torch.nn.GELU(),
+        )
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 2
+        # 4 = (3 - 1) * 1 + (3 - 1) * 1
+        self.right_context = 4
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 2.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 2.
+            torch.Tensor: positional encoding
+
+        """
+        time = x.size(1)
+        x = x.transpose(1, 2)  # (b, f, t)
+        x = self.conv(x)
+        x = x.transpose(1, 2)  # (b, t, f)
+        x, pos_emb = self.pos_enc(x, offset)
+        return x, pos_emb, x_mask[:, :, (time + 1) % 2::2]
+
+
 class Conv2dSubsampling4(BaseSubsampling):
     """Convolutional 2D subsampling (to 1/4 length).
 
@@ -198,6 +259,504 @@ class Conv2dSubsampling4(BaseSubsampling):
         """
         x = x.unsqueeze(1)  # (b, c=1, t, f)
         x = self.conv(x)
+        b, c, t, f = x.size()
+        x = self.out(x.transpose(1, 2).contiguous().view(b, t, c * f))
+        x, pos_emb = self.pos_enc(x, offset)
+        return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
+
+
+class Conv2dSubsampling4_Spike(BaseSubsampling):
+    """Convolutional 2D subsampling (to 1/4 length).
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(
+        self,
+        idim: int,
+        odim: int,
+        dropout_rate: float,
+        pos_enc_class: torch.nn.Module,
+        node: str = "plif",
+        T: int = 4,
+    ):
+        """Construct an Conv2dSubsampling4 object."""
+        super().__init__()
+
+        self.conv1 = torch.nn.Conv2d(1, odim, 3, 2)
+        self.bn1 = torch.nn.BatchNorm2d(odim)
+
+        if node == "plif":
+            self.act1 = MultiStepParametricLIFNode(detach_reset=True)
+            self.act2 = MultiStepParametricLIFNode(detach_reset=True)
+        elif node == "lif":
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+        else:
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+
+        self.conv2 = torch.nn.Conv2d(odim, odim, 3, 2)
+        self.bn2 = torch.nn.BatchNorm2d(odim)
+        self.out = torch.nn.Sequential(
+            torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 4
+        # 6 = (3 - 1) * 1 + (3 - 1) * 2
+        self.right_context = 6
+        self.T = T
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 4.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 4.
+            torch.Tensor: positional encoding
+
+        """
+        # print(x.shape)
+
+        x = x.unsqueeze(2)  # SNN (T, b, c=1, t, f)
+        T, b, c, t, f = x.size()
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act1(x)
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act2(x)
+
+        T, b, c, t, f = x.size()
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.out(x.transpose(1, 2).contiguous().view(b * self.T, t, c * f))
+        x, pos_emb = self.pos_enc(x, offset)
+        x = x.reshape(self.T, b, x.size(1),
+                      x.size(2)).contiguous()  # (T, b, t, c * f)
+        return x, pos_emb, x_mask[:, :, :,
+                                  2::2][:, :, :,
+                                        2::2]  # [:, :, 2::2][:, :, 2::2]
+
+
+class Conv2dSubsampling4_Spike_OriginMask(BaseSubsampling):
+    """Convolutional 2D subsampling (to 1/4 length).
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(self,
+                 idim: int,
+                 odim: int,
+                 dropout_rate: float,
+                 pos_enc_class: torch.nn.Module,
+                 node: str = "plif",
+                 T: int = 4):
+        """Construct an Conv2dSubsampling4 object."""
+        super().__init__()
+
+        self.conv1 = torch.nn.Conv2d(1, odim, 3, 2)
+        self.bn1 = torch.nn.BatchNorm2d(odim)
+
+        if node == "plif":
+            self.act1 = MultiStepParametricLIFNode(detach_reset=True)
+            self.act2 = MultiStepParametricLIFNode(detach_reset=True)
+        elif node == "lif":
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+        else:
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+
+        self.conv2 = torch.nn.Conv2d(odim, odim, 3, 2)
+        self.bn2 = torch.nn.BatchNorm2d(odim)
+        self.out = torch.nn.Sequential(
+            torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 4
+        # 6 = (3 - 1) * 1 + (3 - 1) * 2
+        self.right_context = 6
+        self.T = T
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 4.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 4.
+            torch.Tensor: positional encoding
+
+        """
+        # print(x.shape)
+        # print("2self.T:", self.T)
+
+        x = x.unsqueeze(2)  # SNN (T, b, c=1, t, f)
+        T, b, c, t, f = x.size()
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act1(x)
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act2(x)
+
+        T, b, c, t, f = x.size()
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.out(x.transpose(1, 2).contiguous().view(b * self.T, t, c * f))
+        # print("x:", x.shape)
+        x, pos_emb = self.pos_enc(x, offset)
+        # print("pos_emb:", pos_emb.shape)
+        x = x.reshape(self.T, b, x.size(1),
+                      x.size(2)).contiguous()  # (T, b, t, c * f)
+        # print(x.shape)
+        x = x.flatten(0, 1)
+        x_mask = x_mask.flatten(0, 1)
+        return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
+
+
+class Conv2dSubsampling4_Spike_T_OriginMask(BaseSubsampling):
+    """Convolutional 2D subsampling (to 1/4 length).
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(self,
+                 idim: int,
+                 odim: int,
+                 dropout_rate: float,
+                 pos_enc_class: torch.nn.Module,
+                 node: str = "plif",
+                 T: int = 4):
+        """Construct an Conv2dSubsampling4 object."""
+        super().__init__()
+
+        self.conv1 = torch.nn.Conv2d(1, odim, 3, 2)
+        self.bn1 = torch.nn.BatchNorm2d(odim)
+
+        if node == "plif":
+            self.act1 = MultiStepParametricLIFNode(detach_reset=True)
+            self.act2 = MultiStepParametricLIFNode(detach_reset=True)
+        elif node == "lif":
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+        else:
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+
+        self.conv2 = torch.nn.Conv2d(odim, odim, 3, 2)
+        self.bn2 = torch.nn.BatchNorm2d(odim)
+        self.out = torch.nn.Sequential(
+            torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 4
+        # 6 = (3 - 1) * 1 + (3 - 1) * 2
+        self.right_context = 6
+        self.T = T
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 4.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 4.
+            torch.Tensor: positional encoding
+
+        """
+        # print(x.shape)
+        # print("2self.T:", self.T)
+
+        x = x.unsqueeze(2)  # SNN (T, b, c=1, t, f)
+        T, b, c, t, f = x.size()
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act1(x)
+        x = x.flatten(0, 1)  # (bT, c, t, f)
+        x = self.conv2(x)
+        x = self.bn2(x)
+        x = x.reshape(self.T, b, x.size(1), x.size(2),
+                      x.size(3)).contiguous()  # (T, b, c, t, f)
+        x = self.act2(x)
+
+        T, b, c, t, f = x.size()
+        x = x.transpose(2, 3)  # (T, b, t, c, f)
+        x = x.transpose(0, 1).transpose(1, 2).flatten(
+            2, 3).contiguous()  # (b, Tt, c, f)
+        x = self.out(x.view(b, self.T * t, c * f))
+        x, pos_emb = self.pos_enc(x, offset)
+        x = x.reshape(x.size(0), self.T,
+                      x.size(1) // self.T, x.size(2)).contiguous().transpose(
+                          0, 1).flatten(0, 1)  # Tb, t, c * f
+        x_mask = x_mask.flatten(0, 1)
+        return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
+
+
+class Conv2dSubsampling4_Spike_Length_OriginMask(BaseSubsampling):
+    """Convolutional 2D subsampling (to 1/4 length).
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(self,
+                 idim: int,
+                 odim: int,
+                 dropout_rate: float,
+                 pos_enc_class: torch.nn.Module,
+                 node: str = "plif",
+                 T: int = 4):
+        """Construct an Conv2dSubsampling4 object."""
+        super().__init__()
+
+        if T != 1:
+            self.conv1 = torch.nn.Conv2d(1, odim, 3, 2, padding=(3 - 1) // 2)
+            self.conv2 = torch.nn.Conv2d(odim,
+                                         odim,
+                                         3,
+                                         2,
+                                         padding=(3 - 1) // 2)
+            self.out = torch.nn.Sequential(
+                torch.nn.Linear(odim * (((idim) // 2) // 2), odim))
+        else:
+            self.conv1 = torch.nn.Conv2d(
+                1,
+                odim,
+                3,
+                2,
+            )
+            self.conv2 = torch.nn.Conv2d(odim, odim, 3, 2)
+            self.out = torch.nn.Sequential(
+                torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+
+        self.bn1 = torch.nn.BatchNorm2d(odim)
+
+        if node == "plif":
+            self.act1 = MultiStepParametricLIFNode(detach_reset=True)
+            self.act2 = MultiStepParametricLIFNode(detach_reset=True)
+        elif node == "lif":
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+        else:
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+
+        self.bn2 = torch.nn.BatchNorm2d(odim)
+
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 4
+        # 6 = (3 - 1) * 1 + (3 - 1) * 2
+        self.right_context = 6
+        self.T = T
+        # print("subsamplingT:",T)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 4.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 4.
+            torch.Tensor: positional encoding
+
+        """
+        # print(x.shape)
+
+        x = x.unsqueeze(1)  # SNN (b, c=1, t, f)
+        # print("conv1:",x.shape)
+        x = self.conv1(x)
+        # print("conv1after:",x.shape)
+        x = self.bn1(x)
+        x = x.reshape(x.size(0), x.size(1), self.T,
+                      x.size(2) // self.T, x.size(3)).contiguous().transpose(
+                          1, 2).transpose(0, 1)  # (T, b, c, t//T, f)
+        x = self.act1(x)
+        x = x.transpose(0, 1).transpose(1, 2).flatten(2, 3)  # (b, c, t, f)
+        # print("conv2:",x.shape)
+        x = self.conv2(x)
+        # print("conv2after:",x.shape)
+        x = self.bn2(x)
+        x = x.reshape(x.size(0), x.size(1), self.T,
+                      x.size(2) // self.T, x.size(3)).contiguous().transpose(
+                          1, 2).transpose(0, 1)  # (T, b, c, t//T, f)
+        x = self.act2(x)
+        x = x.transpose(0, 1).transpose(1, 2).flatten(2, 3)  # (b, c, t, f)
+
+        b, c, t, f = x.size()
+        x = self.out(x.transpose(1, 2).contiguous().view(b, t, c * f))
+        x, pos_emb = self.pos_enc(x, offset)
+        if self.T == 1:
+            return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
+        return x, pos_emb, x_mask[:, :, 1::2][:, :, 1::2]
+
+
+class Conv2dSubsampling4_Spike_Audio_Length_OriginMask(BaseSubsampling):
+    """Convolutional 2D subsampling (to 1/4 length).
+
+    Args:
+        idim (int): Input dimension.
+        odim (int): Output dimension.
+        dropout_rate (float): Dropout rate.
+
+    """
+
+    def __init__(self,
+                 idim: int,
+                 odim: int,
+                 dropout_rate: float,
+                 pos_enc_class: torch.nn.Module,
+                 node: str = "plif",
+                 T: int = 4):
+        """Construct an Conv2dSubsampling4 object."""
+        super().__init__()
+
+        self.conv1 = torch.nn.Conv2d(
+            1,
+            odim,
+            3,
+            2,
+        )
+        self.conv2 = torch.nn.Conv2d(odim, odim, 3, 2)
+        self.out = torch.nn.Sequential(
+            torch.nn.Linear(odim * (((idim - 1) // 2 - 1) // 2), odim))
+
+        self.bn1 = torch.nn.BatchNorm2d(odim)
+
+        if node == "plif":
+            self.act1 = MultiStepParametricLIFNode(detach_reset=True)
+            self.act2 = MultiStepParametricLIFNode(detach_reset=True)
+        elif node == "lif":
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+        else:
+            self.act1 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+            self.act2 = MultiStepLIFNode(tau=2.0, detach_reset=True)
+
+        self.bn2 = torch.nn.BatchNorm2d(odim)
+
+        self.pos_enc = pos_enc_class
+        # The right context for every conv layer is computed by:
+        # (kernel_size - 1) * frame_rate_of_this_layer
+        self.subsampling_rate = 4
+        # 6 = (3 - 1) * 1 + (3 - 1) * 2
+        self.right_context = 6
+        self.T = T
+        # print("subsamplingT:",T)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // 4.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // 4.
+            torch.Tensor: positional encoding
+
+        """
+        # print(x.shape)
+
+        x = x.unsqueeze(1)  # SNN (b, c=1, t, f)
+        # print("conv1:",x.shape)
+        x = self.conv1(x)
+        # print("conv1after:",x.shape)
+        x = self.bn1(x)
+        x = x.transpose(1, 2).transpose(0, 1)  # (t, b, c, f)
+        x = self.act1(x)
+        x = x.transpose(0, 1).transpose(1, 2)  # (b, c, t, f)
+        # print("conv2:",x.shape)
+        x = self.conv2(x)
+        # print("conv2after:",x.shape)
+        x = self.bn2(x)
+        x = x.transpose(1, 2).transpose(0, 1)  # (t, b, c, f)
+        x = self.act2(x)
+        x = x.transpose(0, 1).transpose(1, 2)  # (b, c, t, f)
+
         b, c, t, f = x.size()
         x = self.out(x.transpose(1, 2).contiguous().view(b, t, c * f))
         x, pos_emb = self.pos_enc(x, offset)
@@ -310,3 +869,61 @@ class Conv2dSubsampling8(BaseSubsampling):
         x = self.linear(x.transpose(1, 2).contiguous().view(b, t, c * f))
         x, pos_emb = self.pos_enc(x, offset)
         return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2][:, :, 2::2]
+
+
+class StackNFramesSubsampling(BaseSubsampling):
+
+    def __init__(self,
+                 idim: int,
+                 odim: int,
+                 dropout_rate: float,
+                 pos_enc_class: torch.nn.Module,
+                 stride: int = 2):
+
+        super().__init__()
+        del dropout_rate
+        self.pos_enc_class = pos_enc_class
+        self.stride = stride
+        self.idim = idim
+
+        self.norm = torch.nn.LayerNorm(idim * stride, eps=1e-5)
+        self.out = torch.nn.Linear(idim * stride, odim)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        x_mask: torch.Tensor,
+        offset: Union[int, torch.Tensor] = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Subsample x.
+
+        Args:
+            x (torch.Tensor): Input tensor (#batch, time, idim).
+            x_mask (torch.Tensor): Input mask (#batch, 1, time).
+
+        Returns:
+            torch.Tensor: Subsampled tensor (#batch, time', odim),
+                where time' = time // stride.
+            torch.Tensor: Subsampled mask (#batch, 1, time'),
+                where time' = time // stride.
+            torch.Tensor: positional encoding
+        """
+        with torch.no_grad():
+            b, s, _ = x.size()
+
+            seq_len = x_mask.sum(-1).view(b)
+            r = s % self.stride
+            s -= r
+            x = x[:, :s, :]
+            seq_len = torch.where(seq_len > s, s, seq_len)
+            seq_len = seq_len // self.stride
+            new_mask = ~make_pad_mask(seq_len, max_len=s // self.stride)
+            x = x.view(b, s // self.stride, self.idim * self.stride)
+            _, pos_emb = self.pos_enc_class(x, offset)
+        x = self.norm(x)
+        x = self.out(x)
+        return x, pos_emb, new_mask.unsqueeze(1)
+
+    def position_encoding(self, offset: Union[int, torch.Tensor],
+                          size: int) -> torch.Tensor:
+        return self.pos_enc_class.position_encoding(offset, size)

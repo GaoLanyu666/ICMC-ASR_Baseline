@@ -124,11 +124,15 @@ def subsequent_chunk_mask(
     return ret
 
 
-def add_optional_chunk_mask(xs: torch.Tensor, masks: torch.Tensor,
+def add_optional_chunk_mask(xs: torch.Tensor,
+                            masks: torch.Tensor,
                             use_dynamic_chunk: bool,
                             use_dynamic_left_chunk: bool,
-                            decoding_chunk_size: int, static_chunk_size: int,
-                            num_decoding_left_chunks: int):
+                            decoding_chunk_size: int,
+                            static_chunk_size: int,
+                            num_decoding_left_chunks: int,
+                            enable_full_context: bool = True,
+                            max_chunk_size: int = 25):
     """ Apply optional mask for encoder.
 
     Args:
@@ -148,6 +152,9 @@ def add_optional_chunk_mask(xs: torch.Tensor, masks: torch.Tensor,
             the chunk size is decoding_chunk_size.
             >=0: use num_decoding_left_chunks
             <0: use all left chunks
+        enable_full_context (bool):
+            True: chunk size is either [1, max_chunk_size] or full context(max_len)
+            False: chunk size ~ U[1, max_chunk_size]
 
     Returns:
         torch.Tensor: chunk mask of the input xs.
@@ -162,15 +169,15 @@ def add_optional_chunk_mask(xs: torch.Tensor, masks: torch.Tensor,
             chunk_size = decoding_chunk_size
             num_left_chunks = num_decoding_left_chunks
         else:
-            # chunk size is either [1, 25] or full context(max_len).
+            # chunk size is either [1, max_chunk_size] or full context(max_len).
             # Since we use 4 times subsampling and allow up to 1s(100 frames)
             # delay, the maximum frame is 100 / 4 = 25.
             chunk_size = torch.randint(1, max_len, (1, )).item()
             num_left_chunks = -1
-            if chunk_size > max_len // 2:
+            if chunk_size > max_len // 2 and enable_full_context:
                 chunk_size = max_len
             else:
-                chunk_size = chunk_size % 25 + 1
+                chunk_size = chunk_size % max_chunk_size + 1
                 if use_dynamic_left_chunk:
                     max_left_chunks = (max_len - 1) // chunk_size
                     num_left_chunks = torch.randint(0, max_left_chunks,

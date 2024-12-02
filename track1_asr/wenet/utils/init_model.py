@@ -72,9 +72,12 @@ def init_model(configs):
                                        global_cmvn=global_cmvn,
                                        **configs['encoder_conf'])
     elif encoder_type == 'snnconformer': # newcode:SNNConformer
-        encoder = SNNConformerEncoder(input_dim,
-                                      global_cmvn=global_cmvn,
-                                      **configs['encoder_conf'])
+        encoder = SNNConformerEncoder(
+            input_dim,
+            global_cmvn=global_cmvn,
+            **configs['encoder_conf'],
+            **configs['encoder_conf']['efficient_conf']
+            if 'efficient_conf' in configs['encoder_conf'] else {})
     else:
         encoder = TransformerEncoder(input_dim,
                                      global_cmvn=global_cmvn,

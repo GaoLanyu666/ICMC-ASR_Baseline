@@ -104,3 +104,16 @@ def load_trained_modules(model: torch.nn.Module, args: None):
     model.load_state_dict(main_state_dict)
     configs = {}
     return configs
+
+def save_state_dict_and_infos(state_dict, path: str, infos=None):
+    rank = int(os.environ.get('RANK', 0))
+    logging.info('[Rank {}] Checkpoint: save to checkpoint {}'.format(
+        rank, path))
+    torch.save(state_dict, path)
+    info_path = re.sub('.pt$', '.yaml', path)
+    if infos is None:
+        infos = {}
+    infos['save_time'] = datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    with open(info_path, 'w') as fout:
+        data = yaml.dump(infos)
+        fout.write(data)
