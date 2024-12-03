@@ -103,6 +103,7 @@ class Executor:
                 with context():
                     try:
                         if is_deepspeed:
+                            print('train stage5 - DeepSpeed forward pass')
                             # DeepSpeed 模型的前向传播
                             with torch.cuda.amp.autocast(
                                 enabled=ds_dtype is not None,
@@ -120,6 +121,7 @@ class Executor:
                             model.backward(loss)
 
                         else:
+                            print('train stage5 - PyTorch native forward pass')
                             # pytorch native ddp
                             # autocast context
                             # The more details about amp can be found in
