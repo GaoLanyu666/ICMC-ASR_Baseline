@@ -8,7 +8,7 @@ from torch.distributed.fsdp.wrap import (lambda_auto_wrap_policy,
 from wenet.branchformer.encoder_layer import BranchformerEncoderLayer
 from wenet.e_branchformer.encoder_layer import EBranchformerEncoderLayer
 from wenet.efficient_conformer.encoder_layer import StrideConformerEncoderLayer
-from wenet.paraformer.layers import AliParaformerEncoderLayer, SanmDecoderLayer
+# from wenet.paraformer.layers import AliParaformerEncoderLayer, SanmDecoderLayer
 from wenet.squeezeformer.encoder_layer import SqueezeformerEncoderLayer
 from wenet.transformer.encoder_layer import (ConformerEncoderLayer,
                                              TransformerEncoderLayer)
@@ -19,7 +19,7 @@ from wenet.utils.init_model import WENET_DECODER_CLASSES, WENET_ENCODER_CLASSES
 WENET_ENCODER_LAYERS_CLASSES = {
     'transformer_encoder_layer': TransformerEncoderLayer,
     'conformer_encoder_layer': ConformerEncoderLayer,
-    'paraformer_encoder_layer': AliParaformerEncoderLayer,
+    # 'paraformer_encoder_layer': AliParaformerEncoderLayer,
     'squeezeformer_encoder_layer': SqueezeformerEncoderLayer,
     'ebranchformer_encoder_layer': EBranchformerEncoderLayer,
     'efficient_conformer_encoder_layer': StrideConformerEncoderLayer,
@@ -28,7 +28,7 @@ WENET_ENCODER_LAYERS_CLASSES = {
 
 WENET_DECODER_LAYERS_CLASSES = {
     'transformer_decoder_layer': DecoderLayer,
-    'paraformer_decoder_layer': SanmDecoderLayer,
+    # 'paraformer_decoder_layer': SanmDecoderLayer,
     # TODO(Mddct):
     #     1 wrap transducer's predictor and joint
     #     2 wrap paraformer's cif and ignore lstm

@@ -47,7 +47,7 @@ from wenet.utils.fsdp_utils import (check_gradient_checkpoint, fsdp_save_model,
                                     apply_fsdp_checkpointing,
                                     wenet_fsdp_wrap_policy)
 from wenet.utils.scheduler import WarmupLR, NoamHoldAnnealing
-from wenet.utils.ctc_utils import get_blank_id
+from wenet.utils.ctc_util import get_blank_id
 from wenet.utils.common import TORCH_NPU_AVAILABLE
 
 

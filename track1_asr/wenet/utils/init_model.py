@@ -31,6 +31,41 @@ from wenet.paraformer.paraformer import Paraformer
 from wenet.cif.predictor import Predictor
 from wenet.utils.cmvn import load_cmvn
 
+WENET_ENCODER_CLASSES = {
+    "transformer": TransformerEncoder,
+    "conformer": ConformerEncoder,
+    "squeezeformer": SqueezeformerEncoder,
+    "efficientConformer": EfficientConformerEncoder,
+    "branchformer": BranchformerEncoder,
+    "e_branchformer": EBranchformerEncoder,
+}
+
+WENET_DECODER_CLASSES = {
+    "transformer": TransformerDecoder,
+    "bitransformer": BiTransformerDecoder,
+    "none": None,
+}
+
+WENET_CTC_CLASSES = {
+    "ctc": CTC,
+}
+
+WENET_PREDICTOR_CLASSES = {
+    "rnn": RNNPredictor,
+    "embedding": EmbeddingPredictor,
+    "conv": ConvPredictor,
+    "paraformer_predictor": Predictor,
+}
+
+WENET_JOINT_CLASSES = {
+    "transducer_joint": TransducerJoint,
+}
+
+WENET_MODEL_CLASSES = {
+    "asr_model": ASRModel,
+    "transducer": Transducer,
+    'paraformer': Paraformer,
+}
 
 def init_model(configs):
     if configs['cmvn_file'] is not None:
