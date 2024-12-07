@@ -20,6 +20,7 @@ from contextlib import nullcontext
 import torch
 from torch.nn.utils import clip_grad_norm_
 
+from spikingjelly.clock_driven import functional
 
 class Executor:
 
@@ -200,6 +201,7 @@ class Executor:
                     except Exception as e:
                         print(f'Error during logging at stage7: {e}')
                         raise e
+                functional.reset_net(model)  # snn
 
             print('train stage8 - Epoch complete')
 
@@ -255,4 +257,5 @@ class Executor:
                                                             num_seen_utts)
                     log_str += ' rank {}'.format(rank)
                     logging.debug(log_str)
+                functional.reset_net(model)  # snn
         return total_loss, num_seen_utts

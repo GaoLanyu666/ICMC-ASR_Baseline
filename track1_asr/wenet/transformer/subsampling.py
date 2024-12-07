@@ -257,10 +257,15 @@ class Conv2dSubsampling4(BaseSubsampling):
             torch.Tensor: positional encoding
 
         """
+        print("Initial x shape: ", x.shape)  # 打印初始形状
+
         x = x.unsqueeze(1)  # (b, c=1, t, f)
+        print("After unsqueeze: ", x.shape)  # 打印形状
         x = self.conv(x)
+        print("After conv: ", x.shape)  # 打印形状
         b, c, t, f = x.size()
         x = self.out(x.transpose(1, 2).contiguous().view(b, t, c * f))
+        print("After out: ", x.shape)  # 打印形状
         x, pos_emb = self.pos_enc(x, offset)
         return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
 
@@ -425,35 +430,65 @@ class Conv2dSubsampling4_Spike_OriginMask(BaseSubsampling):
             torch.Tensor: positional encoding
 
         """
-        # print(x.shape)
-        # print("2self.T:", self.T)
+        # Initial print for x shape before any modification
+        # print("Initial x shape: ", x.shape)  # 打印初始形状
+        # print("self.T: ",self.T)  # 打印T
 
         x = x.unsqueeze(2)  # SNN (T, b, c=1, t, f)
+        # print("After unsqueeze: ", x.shape)  # 打印形状
+
         T, b, c, t, f = x.size()
+
         x = x.flatten(0, 1)  # (bT, c, t, f)
+        # print("After flattening: ", x.shape)  # 打印形状
+
         x = self.conv1(x)
+        # print("After conv1: ", x.shape)  # 打印形状
+
         x = self.bn1(x)
+        # print("After bn1: ", x.shape)  # 打印形状
+
         x = x.reshape(self.T, b, x.size(1), x.size(2),
-                      x.size(3)).contiguous()  # (T, b, c, t, f)
+                x.size(3)).contiguous()  # (T, b, c, t, f)
+        # print("After reshape: ", x.shape)  # 打印形状
+
         x = self.act1(x)
+        # print("After act1: ", x.shape)  # 打印形状
+
         x = x.flatten(0, 1)  # (bT, c, t, f)
+        # print("After final flatten: ", x.shape)  # 打印形状
+
         x = self.conv2(x)
+        # print("After conv2: ", x.shape)  # 打印形状
+
         x = self.bn2(x)
+        # print("After bn2: ", x.shape)  # 打印形状
+
         x = x.reshape(self.T, b, x.size(1), x.size(2),
                       x.size(3)).contiguous()  # (T, b, c, t, f)
+        # print("After second reshape: ", x.shape)  # 打印形状
+
         x = self.act2(x)
+        # print("After act2: ", x.shape)  # 打印形状
 
         T, b, c, t, f = x.size()
         x = x.flatten(0, 1)  # (bT, c, t, f)
+        # print("After final flatten before out: ", x.shape)  # 打印形状
+
         x = self.out(x.transpose(1, 2).contiguous().view(b * self.T, t, c * f))
-        # print("x:", x.shape)
+        # print("After out layer: ", x.shape)  # 打印形状
+
         x, pos_emb = self.pos_enc(x, offset)
-        # print("pos_emb:", pos_emb.shape)
+        # print("After pos_enc: ", x.shape)  # 打印形状
+
         x = x.reshape(self.T, b, x.size(1),
                       x.size(2)).contiguous()  # (T, b, t, c * f)
-        # print(x.shape)
+        # print("After reshape post pos_enc: ", x.shape)  # 打印形状
+
         x = x.flatten(0, 1)
         x_mask = x_mask.flatten(0, 1)
+
+        # Final output
         return x, pos_emb, x_mask[:, :, 2::2][:, :, 2::2]
 
 
