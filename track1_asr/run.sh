@@ -9,8 +9,8 @@ export CUDA_VISIBLE_DEVICES="0"
 # for debug purpose, please set it to 1 otherwise, set it to 0
 export CUDA_LAUNCH_BLOCKING=0
 
-stage=5 # start from 0 if you need to start from data preparation
-stop_stage=5
+stage=4 # start from 0 if you need to start from data preparation
+stop_stage=4
 data_prep_stage=0  # stage for data preparation
 data_prep_stop_stage=2
 
@@ -37,7 +37,7 @@ test_set=dev_aec_iva
 train_config=conf/train_branchformer.yaml
 cmvn=true
 dir=exp/baseline_branchformer
-checkpoint=exp/baseline_branchformer/62.pt
+checkpoint=
 num_workers=8
 prefetch=500
 find_unused_parameters=false

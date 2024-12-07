@@ -5,12 +5,12 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="1"
+export CUDA_VISIBLE_DEVICES="0"
 # for debug purpose, please set it to 1 otherwise, set it to 0
 export CUDA_LAUNCH_BLOCKING=0
 
-stage=5 # start from 0 if you need to start from data preparation
-stop_stage=5
+stage=4 # start from 0 if you need to start from data preparation
+stop_stage=4
 data_prep_stage=0  # stage for data preparation
 data_prep_stop_stage=2
 
@@ -37,7 +37,7 @@ test_set=dev_aec_iva
 train_config=conf/train_conformer.yaml
 cmvn=true
 dir=exp/baseline_conformer
-checkpoint=exp/baseline_conformer/67.pt
+checkpoint=
 num_workers=8
 prefetch=500
 find_unused_parameters=false

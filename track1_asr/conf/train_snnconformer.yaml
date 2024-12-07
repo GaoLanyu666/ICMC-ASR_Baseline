@@ -64,11 +64,12 @@ dataset_conf:
         sort_size: 500  # sort_size should be less than shuffle_size
     batch_conf:
         batch_type: 'dynamic' # static or dynamic
-        max_frames_in_batch: 1000 # 2080TI 11G VRAM
+        max_frames_in_batch: 6000 # 2080TI 11G VRAM
+    spikepad: false
 
 grad_clip: 5
 accum_grad: 1
-max_epoch: 70
+max_epoch: 43
 log_interval: 100
 
 optim: adam
