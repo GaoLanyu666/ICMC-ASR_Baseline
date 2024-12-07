@@ -32,6 +32,7 @@ from wenet.utils.config import override_config
 from wenet.utils.init_model import init_model
 from wenet.utils.context_graph import ContextGraph
 
+from spikingjelly.clock_driven import functional
 
 def get_args():
     parser = argparse.ArgumentParser(description='recognize with your model')
@@ -416,6 +417,8 @@ def main():
                                             args.connect_symbol.join(content)))
                 fout.write('{} {}\n'.format(key,
                                             args.connect_symbol.join(content)))
+            
+            functional.reset_net(model)  # snn
 
 
 if __name__ == '__main__':
