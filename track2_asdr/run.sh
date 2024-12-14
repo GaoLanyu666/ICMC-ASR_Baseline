@@ -5,11 +5,11 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="0,2,3"
+export CUDA_VISIBLE_DEVICES="0"
 # for debug purpose, please set it to 1 otherwise, set it to 0
 export CUDA_LAUNCH_BLOCKING=0
 
-stage=5 # start from 0 if you need to start from data preparation
+stage=4 # start from 0 if you need to start from data preparation
 stop_stage=5
 
 # Create your access token at https://huggingface.co/settings/tokens
@@ -33,7 +33,7 @@ data_type=raw
 num_utts_per_shard=1000
 
 test_set=dev_aec_iva
-dir=exp/baseline_ebranchformer
+dir=exp/baseline_snnconformer
 
 # use average_checkpoint will get better result
 decode_checkpoint=$dir/avg_10.pt
