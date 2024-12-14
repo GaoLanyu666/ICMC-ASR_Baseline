@@ -40,7 +40,7 @@ dir=exp/baseline_snnconformer
 checkpoint=
 num_workers=8
 prefetch=500
-find_unused_parameters=false
+find_unused_parameters=true
 
 # use average_checkpoint will get better result
 average_checkpoint=true
