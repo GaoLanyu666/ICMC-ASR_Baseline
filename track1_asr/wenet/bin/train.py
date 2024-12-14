@@ -411,10 +411,10 @@ def main():
         lr = optimizer.param_groups[0]['lr']
         logging.info('Epoch {} TRAIN info lr {}'.format(epoch, lr))
         device = model.local_rank if args.deepspeed else device
-        print('begin training')
+        # print('begin training')
         executor.train(model, optimizer, scheduler, train_data_loader, device,
                        writer, configs, scaler)
-        print('end training')
+        # print('end training')
         total_loss, num_seen_utts = executor.cv(model, cv_data_loader, device,
                                                 configs)
         cv_loss = total_loss / num_seen_utts
