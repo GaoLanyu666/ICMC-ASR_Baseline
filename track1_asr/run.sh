@@ -5,19 +5,19 @@
 
 # Use this to control how many gpu you use, It's 1-gpu training if you specify
 # just 1gpu, otherwise it's is multiple gpu training based on DDP in pytorch
-export CUDA_VISIBLE_DEVICES="0"
+export CUDA_VISIBLE_DEVICES="1"
 # for debug purpose, please set it to 1 otherwise, set it to 0
 export CUDA_LAUNCH_BLOCKING=0
 
-stage=4 # start from 0 if you need to start from data preparation
-stop_stage=4
-data_prep_stage=0  # stage for data preparation
+stage=0 # start from 0 if you need to start from data preparation
+stop_stage=0
+data_prep_stage=1  # stage for data preparation
 data_prep_stop_stage=2
 
 ################################################
 # The icmc-asr dataset location, please change this to your own path!!!
 # make sure of using absolute path. DO-NOT-USE relatvie path!
-data=/root/data/ICMC-ASR/ICMC-ASR
+data=/root/data/ICMC-ASR/ICMC-ASR_dpsnn
 # data dir for IVA + AEC enhanced audio
 data_enhanced=/root/data/ICMC-ASR/ICMC-ASR_ENHANCED
 ################################################
